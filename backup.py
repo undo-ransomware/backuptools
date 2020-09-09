@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import os
+import sys
 import shlex
 import subprocess
 from glob import glob
@@ -32,17 +33,16 @@ if args.keep > 0 and not args.check_only and len(existing) > args.keep:
 	subprocess.check_call(['rm', '-rf'] + existing[:-args.keep])
 latest = existing[-1] if existing != [] else None
 now = datetime.now()
-now.microseconds = 0
-current = os.path.join(args.backupdir, now.isoformat('_'))
-tempdir = os.path.join(args.backupdir, 'temp')
-if not os.path.isdir(tempdir):
-	os.mkdir(tempdir)
+current = os.path.join(args.backupdir, now.isoformat('_', timespec='seconds'))
 
 rsync = ['rsync', '--archive', '--acls', '--xattrs', '--numeric-ids',
 		'--one-file-system', '--8-bit-output']
 if args.key is not None:
 	rsync += ['--rsh=ssh -i %s' % shlex.quote(args.key)]
 if not args.check_only:
+	tempdir = os.path.join(args.backupdir, 'temp')
+	if not os.path.isdir(tempdir):
+		os.mkdir(tempdir)
 	if latest is not None:
 		rsync += ['--link-dest=%s' % latest, '--delete-after']
 	rsync += ['--partial-dir=.partial', '--quiet', args.source, tempdir]
@@ -54,4 +54,5 @@ retcode = subprocess.call(rsync)
 # exit code 24 is vanished files, which are somewhat expected on an active system
 if retcode not in [0, 24]:
 	sys.exit(retcode)
-os.rename(tempdir, current)
+if not args.check_only:
+	os.rename(tempdir, current)
