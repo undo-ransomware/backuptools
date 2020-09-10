@@ -21,7 +21,7 @@ class Folder:
 	def __init__(self, keys):
 		self.localpath = keys['localpath']
 		self.targetpath = keys['targetpath']
-		self.ignore_hidden = bool(keys['ignorehiddenfiles'])
+		self.ignore_hidden = keys['ignorehiddenfiles'] == 'true'
 	
 	def __repr__(self):
 		return '%s → %s' % (self.localpath, self.targetpath)
