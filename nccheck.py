@@ -51,6 +51,8 @@ def scan_files(basedir, qpath, ignore_hidden, path=''):
 		abspath = os.path.join(basedir, relpath)
 		if is_excluded(file, ignore_hidden):
 			yield relpath, urlpath, 'excluded'
+		elif os.path.islink(abspath):
+			yield relpath, urlpath, 'symlink'
 		elif os.path.isdir(abspath):
 			for tup in scan_files(basedir, urlpath, ignore_hidden, relpath):
 				yield tup
