@@ -3,6 +3,7 @@ import os
 import io
 import sys
 import yaml
+import urllib
 import requests
 from fnmatch import fnmatch
 from argparse import ArgumentParser
@@ -43,19 +44,20 @@ def is_excluded(file, ignore_hidden):
 		return True
 	return any(fnmatch(file, x) for x in nc_excludes)
 
-def scan_files(basedir, path, ignore_hidden):
+def scan_files(basedir, qpath, ignore_hidden, path=''):
 	for file in os.listdir(os.path.join(basedir, path)):
+		urlpath = '%s/%s' % (qpath, urllib.parse.quote(file))
 		relpath = os.path.join(path, file)
 		abspath = os.path.join(basedir, relpath)
 		if is_excluded(file, ignore_hidden):
-			yield file, 'excluded'
+			yield relpath, urlpath, 'excluded'
 		elif os.path.isdir(abspath):
-			for f, type in scan_files(basedir, relpath, ignore_hidden):
-				yield f, type
+			for tup in scan_files(basedir, urlpath, ignore_hidden, relpath):
+				yield tup
 		elif os.path.isfile(abspath):
-			yield relpath, None
+			yield relpath, urlpath, None
 		else:
-			yield relpath, 'sepecial'
+			yield relpath, urlpath, 'special'
 
 class WebDav:
 	def __init__(self, baseurl, user, password):
@@ -98,14 +100,14 @@ webdav = WebDav(acct.url, acct.user, passwords[acct.url][acct.user])
 for folder in [acct.folders[k] for k in args.folder]:
 	if args.verbose:
 		sys.stderr.write('checking %s\n' % folder)
-	for path, type in scan_files(folder.localpath, '', folder.ignore_hidden):
+	for path, url, type in scan_files(folder.localpath,
+			folder.targetpath, folder.ignore_hidden):
 		local = os.path.join(folder.localpath, path)
 		if type is not None:
 			if args.verbose:
 				sys.stdout.write('%s: %s\n' % (local, type))
 			continue
-		remote = os.path.join(folder.targetpath, path)
-		error = compare(webdav, local, remote)
+		error = compare(webdav, local, url)
 		if error is not None:
 			sys.stdout.write('%s: %s\n' % (local, error))
 		elif args.verbose:
