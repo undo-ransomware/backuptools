@@ -18,6 +18,10 @@ parser = ArgumentParser(description='Utility to check whether all files ' +
 		'failing to properly write a file to disk.')
 parser.add_argument('folder', nargs='*', help='paths to compare against ' +
 		'Nextcloud (as defined in the sync client\'s config file)')
+parser.add_argument('-l', '--log', metavar='FILE',
+		help='append list of correctly retrieved files to the given file. ' +
+		'if that file exists, also skips checking the files already ' +
+		'listed in it (ie. allows resuming a check where it left off).')
 parser.add_argument('-p', '--passwords-from', default='passwords.yaml', 
 		help='load app passwords from this file (default: passwords.yaml)',
 		metavar='YAML')
@@ -103,6 +107,12 @@ def find_remote_base(path):
 						folder.ignore_hidden
 	return None, None, None
 
+known_good = set()
+if args.log is not None:
+	if os.path.isfile(args.log):
+		with io.open(args.log, 'r') as log:
+			known_good = set(file[:-1] for file in log)
+	log = io.open(args.log, 'a')
 with io.open(args.passwords_from, 'r') as file:
 	passwords = yaml.load(file)
 for localbase in args.folder:
@@ -114,13 +124,19 @@ for localbase in args.folder:
 	webdav = WebDav(acct.url, acct.user, passwords[acct.url][acct.user])
 	for path, url, type in scan_files(localbase, remotebase, ignore_hidden):
 		local = os.path.join(localbase, path)
+		if local in known_good:
+			continue
 		if type is not None:
 			if args.verbose:
 				sys.stdout.write('%s: %s\n' % (local, type))
 			continue
 		error = compare(webdav, local, url)
-		if error is not None:
+		if error is None:
+			if args.verbose:
+				sys.stdout.write('%s: ok\n' % local)
+			log.write('%s\n' % local)
+			log.flush()
+		else:
 			sys.stdout.write('%s: %s\n' % (local, error))
-		elif args.verbose:
-			sys.stdout.write('%s: ok\n' % local)
 		sys.stdout.flush()
+log.close()
