@@ -12,32 +12,31 @@ from ncconfig import load_nc_accounts, load_nc_excludes
 REMOTE = '/remote.php/webdav'
 CHUNK_SIZE = 1024*1024
 
-nc_config = load_nc_accounts()
-nc_excludes = load_nc_excludes()
-
 parser = ArgumentParser(description='Utility to check whether all files ' +
 		'synced to Nextcloud can actually be retrieved from there, and ' +
-		'identically so. Necessary because Nextcloud sometimes fails to ' +
-		'properly write a file to disk.')
-parser.add_argument('account', nargs='?', help='index of account in ' +
-		'nextcloud.cfg (run without arguments to list all accounts)')
-parser.add_argument('folder', nargs='*',
-	help='indexes of folders to check for this account (default is all)')
+		'identically so. Useful to check against bit rot or Nextcloud ' +
+		'failing to properly write a file to disk.')
+parser.add_argument('folder', nargs='*', help='paths to compare against ' +
+		'Nextcloud (as defined in the sync client\'s config file)')
+parser.add_argument('-p', '--passwords-from', default='passwords.yaml', 
+		help='load app passwords from this file (default: passwords.yaml)',
+		metavar='YAML')
+parser.add_argument('-a', '--list-accounts', action='store_true',
+		help='list all accounts and paths defined in the sync client\'s ' +
+		'config file. default when no paths given.')
 parser.add_argument('-v', '--verbose', action='store_true',
-	help='list all files as they are being checked, not just errors')
+		help='list all files as they are being checked, not just errors')
 args = parser.parse_args()
-if args.account is not None and args.account not in nc_config:
-	sys.stderr.write('%s: no such account!\n' % args.account)
-	args.account=None
-if args.account is None:
-	sys.stderr.write('accounts defined in config:\n')
+
+nc_config = load_nc_accounts()
+nc_excludes = load_nc_excludes()
+if args.list_accounts or args.folder == []:
+	sys.stderr.write('accounts defined in nextcloud.cfg:\n')
 	for index, account in nc_config.items():
 		sys.stderr.write('%s: %s\n' % (index, account))
 		for jndex, folder in account.folders.items():
 			sys.stderr.write('\t%s: %s\n' % (jndex, folder))
 	sys.exit(0)
-if args.folder == []:
-	args.folder = nc_config[args.account].folders.keys()
 
 def is_excluded(file, ignore_hidden):
 	if ignore_hidden and file.startswith('.'):
@@ -95,16 +94,26 @@ def compare(webdav, local_path, remote_path):
 		if len(file.read(1)) > 0:
 			return 'remote eof at %d' % off
 
-acct = nc_config[args.account]
-with io.open('passwords.yaml', 'r') as file:
+def find_remote_base(path):
+	for acct in nc_config.values():
+		for folder in acct.folders.values():
+			if path.startswith(folder.localpath):
+				return '%s/%s' % (folder.targetpath, urllib.parse.quote(
+						os.path.relpath(path, folder.localpath))), acct, \
+						folder.ignore_hidden
+	return None, None, None
+
+with io.open(args.passwords_from, 'r') as file:
 	passwords = yaml.load(file)
-webdav = WebDav(acct.url, acct.user, passwords[acct.url][acct.user])
-for folder in [acct.folders[k] for k in args.folder]:
-	if args.verbose:
-		sys.stderr.write('checking %s\n' % folder)
-	for path, url, type in scan_files(folder.localpath,
-			folder.targetpath, folder.ignore_hidden):
-		local = os.path.join(folder.localpath, path)
+for localbase in args.folder:
+	remotebase, acct, ignore_hidden = find_remote_base(localbase)
+	if remotebase is None:
+		sys.stdout.write('%s: not synced\n' % localbase)
+		continue
+
+	webdav = WebDav(acct.url, acct.user, passwords[acct.url][acct.user])
+	for path, url, type in scan_files(localbase, remotebase, ignore_hidden):
+		local = os.path.join(localbase, path)
 		if type is not None:
 			if args.verbose:
 				sys.stdout.write('%s: %s\n' % (local, type))
