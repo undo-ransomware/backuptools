@@ -28,8 +28,10 @@ parser.add_argument('-p', '--passwords-from', default='passwords.yaml',
 parser.add_argument('-a', '--list-accounts', action='store_true',
 		help='list all accounts and paths defined in the sync client\'s ' +
 		'config file. default when no paths given.')
+parser.add_argument('-e', '--excluded', action='store_true',
+		help='list excluded files instead of silently skipping them')
 parser.add_argument('-v', '--verbose', action='store_true',
-		help='list all files as they are being checked, not just errors')
+		help='also list files that were correctly retrieved or excluded')
 args = parser.parse_args()
 
 nc_config = load_nc_accounts()
@@ -44,16 +46,18 @@ if args.list_accounts or args.folder == []:
 
 def is_excluded(file, ignore_hidden):
 	if ignore_hidden and file.startswith('.'):
-		return True
-	return any(fnmatch(file, x) for x in nc_excludes)
+		return 'hidden'
+	if any(fnmatch(file, x) for x in nc_excludes):
+		return 'excluded'
 
 def scan_files(basedir, qpath, ignore_hidden, path=''):
 	for file in os.listdir(os.path.join(basedir, path)):
 		urlpath = '%s/%s' % (qpath, urllib.parse.quote(file))
 		relpath = os.path.join(path, file)
 		abspath = os.path.join(basedir, relpath)
-		if is_excluded(file, ignore_hidden):
-			yield relpath, urlpath, 'excluded'
+		skip = is_excluded(file, ignore_hidden)
+		if skip is not None:
+			yield relpath, urlpath, skip
 		elif os.path.islink(abspath):
 			yield relpath, urlpath, 'symlink'
 		elif os.path.isdir(abspath):
@@ -122,13 +126,13 @@ for localbase in args.folder:
 		continue
 
 	webdav = WebDav(acct.url, acct.user, passwords[acct.url][acct.user])
-	for path, url, type in scan_files(localbase, remotebase, ignore_hidden):
+	for path, url, skip in scan_files(localbase, remotebase, ignore_hidden):
 		local = os.path.join(localbase, path)
 		if local in known_good:
 			continue
-		if type is not None:
-			if args.verbose:
-				sys.stdout.write('%s: %s\n' % (local, type))
+		if skip is not None:
+			if args.verbose or args.excluded:
+				sys.stdout.write('%s: %s\n' % (local, skip))
 			continue
 		error = compare(webdav, local, url)
 		if error is None:
