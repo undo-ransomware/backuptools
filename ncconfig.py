@@ -2,6 +2,7 @@
 import os
 import io
 import configparser
+from urllib.parse import quote
 
 NCCFG = os.path.expanduser('~/.config/Nextcloud')
 
@@ -22,7 +23,7 @@ class Folder:
 		self.localpath = keys['localpath']
 		self.targetpath = keys['targetpath'][1:] # relative
 		self.ignore_hidden = keys['ignorehiddenfiles'] == 'true'
-	
+
 	def __repr__(self):
 		return '%s → %s' % (self.localpath, self.targetpath)
 
@@ -33,7 +34,7 @@ class Account:
 		auth = keys['authtype']
 		self.user = keys['%s_user' % auth]
 		self.folders = { i: Folder(k) for i, k in subkeys(keys, 'folders\\') }
-	
+
 	def __repr__(self):
 		return '%s as %s' % (self.url, self.user)
 

@@ -19,7 +19,7 @@ parser.add_argument('-l', '--log', metavar='FILE',
 		help='append list of correctly retrieved files to the given file. ' +
 		'if that file exists, also skips checking the files already ' +
 		'listed in it (ie. allows resuming a check where it left off).')
-parser.add_argument('-p', '--passwords-from', default='passwords.yaml', 
+parser.add_argument('-p', '--passwords-from', default='passwords.yaml',
 		help='load app passwords from this file (default: passwords.yaml)',
 		metavar='YAML')
 parser.add_argument('-a', '--list-accounts', action='store_true',
