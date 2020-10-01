@@ -20,7 +20,7 @@ def subkeys(config, prefix):
 class Folder:
 	def __init__(self, keys):
 		self.localpath = keys['localpath']
-		self.targetpath = keys['targetpath']
+		self.targetpath = keys['targetpath'][1:] # relative
 		self.ignore_hidden = keys['ignorehiddenfiles'] == 'true'
 	
 	def __repr__(self):

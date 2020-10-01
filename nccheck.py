@@ -3,14 +3,11 @@ import os
 import io
 import sys
 import yaml
-import urllib
-import requests
+from minidav import WebDav, CHUNK_SIZE
 from fnmatch import fnmatch
+from urllib.parse import quote
 from argparse import ArgumentParser
 from ncconfig import load_nc_accounts, load_nc_excludes
-
-REMOTE = '/remote.php/webdav'
-CHUNK_SIZE = 1024*1024
 
 parser = ArgumentParser(description='Utility to check whether all files ' +
 		'synced to Nextcloud can actually be retrieved from there, and ' +
@@ -52,7 +49,7 @@ def is_excluded(file, ignore_hidden):
 
 def scan_files(basedir, qpath, ignore_hidden, path=''):
 	for file in os.listdir(os.path.join(basedir, path)):
-		urlpath = '%s/%s' % (qpath, urllib.parse.quote(file))
+		urlpath = '%s/%s' % (qpath, quote(file))
 		relpath = os.path.join(path, file)
 		abspath = os.path.join(basedir, relpath)
 		skip = is_excluded(file, ignore_hidden)
@@ -67,20 +64,6 @@ def scan_files(basedir, qpath, ignore_hidden, path=''):
 			yield relpath, urlpath, None
 		else:
 			yield relpath, urlpath, 'special'
-
-class WebDav:
-	def __init__(self, baseurl, user, password):
-		self.base = baseurl + REMOTE
-		self.session = requests.Session()
-		self.session.auth = (user, password)
-		self.session.stream = True
-		self.session.verify = True
-	
-	def get(self, path):
-		return self.session.get(self.base + path)
-	
-	def close(self):
-		self.session.close()
 
 def compare(webdav, local_path, remote_path):
 	off = 0
@@ -106,9 +89,8 @@ def find_remote_base(path):
 	for acct in nc_config.values():
 		for folder in acct.folders.values():
 			if path.startswith(folder.localpath):
-				return '%s/%s' % (folder.targetpath, urllib.parse.quote(
-						os.path.relpath(path, folder.localpath))), acct, \
-						folder.ignore_hidden
+				return '%s/%s' % (folder.targetpath, quote(os.path.relpath(
+						path, folder.localpath))), acct, folder.ignore_hidden
 	return None, None, None
 
 known_good = set()
@@ -117,6 +99,8 @@ if args.log is not None:
 		with io.open(args.log, 'r') as log:
 			known_good = set(file[:-1] for file in log)
 	log = io.open(args.log, 'a')
+else:
+	log = None
 with io.open(args.passwords_from, 'r') as file:
 	passwords = yaml.load(file)
 for localbase in args.folder:
@@ -138,9 +122,11 @@ for localbase in args.folder:
 		if error is None:
 			if args.verbose:
 				sys.stdout.write('%s: ok\n' % local)
-			log.write('%s\n' % local)
-			log.flush()
+			if log is not None:
+				log.write('%s\n' % local)
+				log.flush()
 		else:
 			sys.stdout.write('%s: %s\n' % (local, error))
 		sys.stdout.flush()
-log.close()
+if log is not None:
+	log.close()
