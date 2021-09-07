@@ -102,7 +102,7 @@ if args.log is not None:
 else:
 	log = None
 with io.open(args.passwords_from, 'r') as file:
-	passwords = yaml.load(file)
+	passwords = yaml.safe_load(file)
 for localbase in args.folder:
 	remotebase, acct, ignore_hidden = find_remote_base(localbase)
 	if remotebase is None:

@@ -41,7 +41,7 @@ parser.add_argument('-v', '--verbose', action='store_true',
 args = parser.parse_args()
 
 with io.open(args.passwords_from, 'r') as file:
-	passwords = yaml.load(file)
+	passwords = yaml.safe_load(file)
 if args.user is None:
 	args.user = next((acct.user
 			for acct in load_nc_accounts().values()
