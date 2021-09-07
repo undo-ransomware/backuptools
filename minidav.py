@@ -16,7 +16,7 @@ PROPFIND = '<?xml version="1.0"?><propfind xmlns="DAV:"><allprop/></propfind>'
 class Resource:
 	def __init__(self, base, node):
 		self.href = urljoin(base, node.find('{DAV:}href').text)
-		if not self.href.startswith(base):
+		if not unquote(self.href).startswith(unquote(base)):
 			raise Exception('child %s not within parent %s'
 					% (self.href, base))
 		name = unquote(self.href[len(base):])
