@@ -5,7 +5,10 @@ import re
 
 class RsyncParser:
 	def __init__(self):
-		self.required = dict()
+		self.restore = dict()
+		self.backup = dict()
+		self.verify = dict()
+		self.list = dict()
 
 	def is_quiet(self):
 		return '-q' in self.opts or '--quiet' in self.opts
@@ -13,11 +16,8 @@ class RsyncParser:
 	def is_verbose(self):
 		return '-v' in self.opts or '--verbose' in self.opts
 
-	def is_sender(self):
-		return '--sender' in self.opts
-
-	def is_list(self):
-		return '--list-only' in self.opts
+	def get_mode(self):
+		return self.mode
 
 	def get_messages(self):
 		msgs = list()
@@ -36,7 +36,7 @@ class RsyncParser:
 		for opt, values in sorted(self.opts.items()):
 			for value in sorted(values):
 				if value is not None:
-					cmd.append('%s=%s' % (opt, value))
+					cmd.append('%s%s' % (opt, value))
 				else:
 					cmd.append(opt)
 		return cmd
@@ -66,6 +66,7 @@ class RsyncParser:
 				opt, opts = opts.split(' ', 1)
 				if '=' in opt: # rsync always passes them as --option=value
 					opt, value = opt.split('=', 1)
+					opt += '='
 				else:
 					value = None
 			elif opts.startswith('-e'): # special case, -e takes specifies a few internal feature flags
@@ -85,58 +86,78 @@ class RsyncParser:
 				value = None
 				opts = '-' + opts[2:]
 
-			if opt in ['--sender', '--list-only', '-q', '--quiet', '-v', '--verbose']: # special options
-				self.opts[opt].append(value)
-				continue
-			if opt not in self.required:
+			if opt not in ['--sender', '--list-only', '-q', '--quiet', '-v', '--verbose', '-n', '--dry-run'] \
+					and opt not in self.restore: # member set is identical for all of them!
 				self.error(opt, 'unknown option')
 				continue
-			method, hard, alias, hint = self.required[opt]
-			key = opt if alias is None else alias
-			if method == 'deny':
-				if hard:
-					self.error(key, 'do not use', hint)
-				else:
-					self.warn(key, 'avoid using', hint)
-					self.opts[opt].append(value)
-			else: # allow or require
-				self.opts[opt].append(value)
+			self.opts[opt].append(value)
 
-		for opt, (method, hard, alias, hint) in self.required.items():
-			if method == 'require' and opt not in self.opts:
-				key = opt if alias is None else alias
+		if not opts.startswith('. '):
+			raise RsyncParserException('rsync --server must give source as ".", but found %s' % opts)
+		self.path = opts[2:]
+
+		if '--list-only' in self.opts: # --list-only overrides (implies?) -n
+			optlist = self.list
+			self.mode = 'list'
+		elif '-n' in self.opts or '--dry-run' in self.opts:
+			optlist = self.verify
+			self.mode = 'verify'
+		elif '--sender' in self.opts:
+			optlist = self.restore
+			self.mode = 'restore'
+		else:
+			optlist = self.backup
+			self.mode = 'backup'
+		for opt, (mode, hard, alias, hint) in optlist.items():
+			key = opt if alias is None else alias
+			if mode == 'require' and opt not in self.opts:
 				if hard:
 					self.error(key, 'must use', hint)
 				else:
 					self.warn(key, 'consider using', hint)
+			if mode == 'deny' and opt in self.opts:
+				if hard:
+					self.error(key, 'do not use', hint)
+				else:
+					self.warn(key, 'avoid using', hint)
 
-		if not opts.startswith('. '):
-			raise RsyncParserException('rsync --server must give source as "." not as in %s' % opts)
-		self.path = opts[2:]
+	def add(self, modes, *args, alias=None):
+		for names, mode, *hint in modes:
+			if names is None:
+				names = 'restore backup verify list'
+			hint = hint[0] if len(hint) > 0 else None
 
-	def add_argument(self, *args, method='allow', hard=True, alias=None, hint=None):
-		if method not in ['allow', 'deny', 'require']:
-			raise RsyncParserException('illegal method %s' % method)
-		for arg in args:
-			if ' ' in arg:
-				arg, local_alias = arg.split(' ', 1)
-			else:
-				local_alias = alias
-			if local_alias is not None and ' ' in local_alias:
-				short, long = local_alias.split(' ', 1)
-				local_alias = '%s / %s' % (short, long)
-			self.required[arg] = (method, hard, local_alias, hint)
+			for name in names.split(' '):
+				if mode == 'discourage':
+					mode = 'deny'
+					hard = False
+				elif mode == 'recommend':
+					mode = 'require'
+					hard = False
+				else:
+					hard = True
+				if mode not in ['allow', 'deny', 'require']:
+					raise RsyncParserException('illegal %s mode %s' % (name, mode))
 
-	def allow(self, *arg, **kwargs):
-		self.add_argument(*arg, method='allow', **kwargs)
-	def deny(self, *arg, **kwargs):
-		self.add_argument(*arg, method='deny', **kwargs)
-	def require(self, *arg, **kwargs):
-		self.add_argument(*arg, method='require', **kwargs)
-	def discourage(self, *arg, **kwargs):
-		self.add_argument(*arg, method='deny', hard=False, **kwargs)
-	def recommend(self, *arg, **kwargs):
-		self.add_argument(*arg, method='require', hard=False, **kwargs)
+				arglist = { 'restore': self.restore, 'backup': self.backup, 'verify': self.verify,
+						'list': self.list }[name]
+				for arg in args:
+					local_alias = arg if alias is None else alias
+					local_alias = ' / '.join(local_alias.split(' ', 1))
+					if ' ' in arg:
+						arg = arg.split(' ', 1)[0]
+					arglist[arg] = (mode, hard, local_alias, hint)
+
+	def allow(self, *args, hint=None, **kwargs):
+		self.add([(None, 'allow', hint)], *args, **kwargs)
+	def deny(self, *args, hint=None, **kwargs):
+		self.add([(None, 'deny', hint)], *args, **kwargs)
+	def require(self, *args, hint=None, **kwargs):
+		self.add([(None, 'require', hint)], *args, **kwargs)
+	def discourage(self, *args, hint=None, **kwargs):
+		self.add([(None, 'discourage', hint)], *args, **kwargs)
+	def recommend(self, *args, hint=None, **kwargs):
+		self.add([(None, 'recommend', hint)], *args, **kwargs)
 
 class RsyncParserException(Exception):
 	pass
@@ -181,8 +202,7 @@ if __name__ == '__main__':
 			'-r', '-t', '-v', '-z']
 	assert parser.is_verbose()
 	assert not parser.is_quiet()
-	assert parser.is_sender()
-	assert not parser.is_list()
+	assert parser.get_mode() == 'restore'
 
 	parser.parse('rsync --server -qrlptgoDe.iLsfxC --numeric-ids . root  and other stuff&/$nothing')
 	assert parser.get_messages() == []
@@ -191,8 +211,7 @@ if __name__ == '__main__':
 			'-q', '-r', '-t']
 	assert not parser.is_verbose()
 	assert parser.is_quiet()
-	assert not parser.is_sender()
-	assert not parser.is_list()
+	assert parser.get_mode() == 'backup'
 
 	parser.parse('rsync --server --list-only -rlptgoDe.iLsfxC --numeric-ids . root@2011-01-01/etc/passwd ')
 	assert parser.get_messages() == []
@@ -201,5 +220,32 @@ if __name__ == '__main__':
 		'-o', '-p', '-r', '-t']
 	assert not parser.is_verbose()
 	assert not parser.is_quiet()
-	assert not parser.is_sender()
-	assert parser.is_list()
+	assert parser.get_mode() == 'list'
+
+	parser.parse('rsync --server -nzrlptgoDe.iLsfxC --numeric-ids . /')
+	assert parser.get_messages() == []
+	assert parser.get_path() == '/'
+	assert parser.get_command() == ['rsync', '--server', '--numeric-ids', '-D', '-e.iLsfxC', '-g', '-l', '-n', '-o',
+			'-p', '-r', '-t', '-z']
+	assert not parser.is_verbose()
+	assert not parser.is_quiet()
+	assert parser.get_mode() == 'verify'
+
+	parser.add([('backup', 'allow'), ('restore verify list', 'deny', 'ever')], '--list=', '--unlist')
+	parser.add([('restore', 'allow'), ('backup verify list', 'discourage')], '--lost=')
+	parser.parse('rsync --server -zrlptgoDe.iLsfxC --numeric-ids --list=nothing --lost=/dev/null . /')
+	assert parser.get_messages() == ['WARNING avoid using --lost=']
+	assert parser.get_path() == '/'
+	assert parser.get_command() == ['rsync', '--server', '--list=nothing', '--lost=/dev/null', '--numeric-ids', '-D',
+			'-e.iLsfxC', '-g', '-l', '-o', '-p', '-r', '-t', '-z']
+	assert not parser.is_verbose()
+	assert not parser.is_quiet()
+	assert parser.get_mode() == 'backup'
+
+	parser.parse('rsync --server --sender -zrlptgoDe.iLsfxC --numeric-ids --list=nothing --lost --lost=/dev/null . /')
+	assert parser.get_messages() == ['ERROR do not use --list= (ever)', 'ERROR unknown option --lost']
+	assert parser.get_path() is None
+	assert parser.get_command() is None
+	assert not parser.is_verbose()
+	assert not parser.is_quiet()
+	assert parser.get_mode() == 'restore'
