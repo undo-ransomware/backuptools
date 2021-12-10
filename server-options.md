@@ -52,42 +52,42 @@ impossible = like denied but because it cannot happen
 parsed = allowed and backup.py actually also obeys it
 
 option					allowed		because								meaning
--A						recommended	desirable but possibly unsupported	preserve ACLs
--C						discouraged	undesirable for complete backup		ignored CVS-ignored files
+-A --acls				required	desirable, harmless if unsupported	preserve ACLs
+-C --cvs-exclude		discouraged	undesirable for complete backup		ignored CVS-ignored files
 -D --specials --devices	recommended	desirable but possibly unsupported	preserve devices & special files
--E						impossible	superseded by -p					preserve execute bit
+-E --executability		impossible	superseded by -p					preserve execute bit
 -H --hard-links			required	prevent infinite backup expansion	preserve hardlinks
 -I --ignore-times		impossible	needed without -c; unused with -c	don't skip files that match size and time
--J						avoid		undesirable but possibly needed		don't preserve mtime on symlinks
--K						denied		insecure: arbitrary overwrite		makes the server follow symlinks, possibly overwriting arbitrary files or directories
--L						denied		undesirable for complete backup		dereference symlinks
+-J --omit-link-times	avoid		undesirable but possibly needed		don't preserve mtime on symlinks
+-K --keep-dirlinks		denied		insecure: arbitrary overwrite		makes the server follow symlinks, possibly overwriting arbitrary files or directories
+-L --copy-links			denied		undesirable for complete backup		dereference symlinks
 -N						optional	desirable but possibly unsupported	preserve create times
--O						avoid		undesirable for complete backup		don't preserve mtime on directories
--R						denied		confuses the backup logic			this allows sending /boot into /boot in the boot space – why?
--S						optional?	trade-off deferred to client		efficiently handle sparse files (can help massively but only if there are sparse files. TBD this is "recommended" if its overhead is basically zero)
+-O --omit-dir-times		avoid		undesirable for complete backup		don't preserve mtime on directories
+-R --relative			denied		confuses the backup logic			this allows sending /boot into /boot in the boot space – why?
+-S --sparse				optional?	trade-off deferred to client		efficiently handle sparse files (can help massively but only if there are sparse files. TBD this is "recommended" if its overhead is basically zero)
 -U						optional	usually unnecesary					preserve atime
--W						avoid		inefficient in most cases			disable delta-transfer algorithm (usually a slowdown)
--X						recommended	desirable but possibly unsupported	preserve xattrs
--b						denied		ruins the backup, unnecessary		add a backup extension to existing files (but the backup has versioning for that)
--c						avoid		unnecessarily slow for backup		use checksums instead of time & size
--c						recommended	assures correctness for check		use checksums instead of time & size
--d						denied		undesirable for complete backup		don't recurse into directories
+-W --whole-file			avoid		inefficient in most cases			disable delta-transfer algorithm (usually a slowdown)
+-X --xattrs				recommended	ddesirable, harmless if unsupported	preserve xattrs
+-b --backup				denied		ruins the backup, unnecessary		add a backup extension to existing files (but the backup has versioning for that)
+-c --checksum			avoid		unnecessarily slow for backup		use checksums instead of time & size
+-c --checksum			recommended	assures correctness for check		use checksums instead of time & size
+-d --dirs				denied		undesirable for complete backup		don't recurse into directories
 -g --group				required	needed for complete backup			preserve group
--k						denied		undesirable for complete backup		dereference symlink to directory locally
+-k --copy-dirlinks		denied		undesirable for complete backup		dereference symlink to directory locally
 -l --links				required	needed for complete backup			preserve symlinks
--m						denied		undesirable for complete backup		removes empty directories?
--n						parsed		enables check mode					dry run
+-m --prune-empty-dirs	denied		undesirable for complete backup		removes empty directories?
+-n --dry-run			parsed		enables check mode					dry run
 -o --owner				required	needed for complete backup			preserve owner
 -p --perms				required	needed for complete backup			preserve permissions
--q						parsed		enables quiet also for backup.py	quiet mode
+-q --quiet				parsed		enables quiet also for backup.py	quiet mode
 -r --recursive			required	needed for complete backup			recurse into directories
--s						denied		breaks the backup logic				sends paths over stdio (but backup logic needs to process them)
+-s --protect-args		denied		breaks the backup logic				sends paths over stdio (but backup logic needs to process them)
 -t --times				required	needed for complete backup			preserve mtimes
--u						denied		breaks the backup logic				skip newer files on receiver (for a backup, there shouldn't be any)
--v						parsed		enables verbose also for backup.py	verbose mode
+-u --update				denied		breaks the backup logic				skip newer files on receiver (for a backup, there shouldn't be any)
+-v --verbose			parsed		enables verbose also for backup.py	verbose mode
 -x --one-file-system	recommended	harmless, annoying to disable		don't cross filesystem boundaries (basically necessary on client for /, does nothing on server)
 -y --fuzzy				allowed		trade-off deferred to client		try to find a good base file if destination missing (can be a speedup, and reduce backup size, but computationally expensive)
--z						allowed		trade-off deferred to client		compress file data during the transfer (effectiveness depends on network vs. compression speed vs. compressability)
+-z --compress			allowed		trade-off deferred to client		compress file data during the transfer (effectiveness depends on network vs. compression speed vs. compressability)
 -@ --modify-window		denied		avoids short-opt arg parsing		set the accuracy for mtime comparisons (unnecessary because they are copied)
 -B --block-size			denied		avoids short-opt arg parsing		select transfer block size (default autoselects, even the manpage doesn't fully describe that one!)
 
