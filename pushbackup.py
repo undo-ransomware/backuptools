@@ -30,8 +30,9 @@ cmd.add([('backup restore', 'discourage', 'slows down transfers'), ('list', 'all
 		('verify', 'recommend', 'more thorough verification')], '-c --checksum')
 # --itemize-changes actually sets --log-format. verify does very little without --itemize-changes, and it can also be
 # useful to monitor backup etc. progress.
-cmd.add([('verify', 'recommend', 'to see the differences'), ('backup restore list', 'allow')], '-i --itemize-changes',
-		'--log-format=', alias='-i --itemize-changes')
+cmd.add([('verify', 'recommend', 'to see the differences'), ('backup restore list', 'allow')], '--log-format=',
+		alias='-i --itemize-changes')
+cmd.allow('-i --itemize-changes')
 
 #### options that we actually use internally and thus don't want the client to set ####
 # these are unsupported for backup because we want to set --list-dest ourselves. they are never even sent to the server
@@ -162,6 +163,7 @@ config.add_str('target')
 config.add_int('keep-count')
 config.add_timedelta('keep-duration')
 config.add_timedelta('backup-cooldown')
+config.add_str('root', 'fake') # works OOTB on filesystems with xattrs (all modern ones do)
 with open(args.config, 'r') as fd:
 	config.parse(fd)
 if config['target'] is None:
@@ -176,6 +178,9 @@ elif config['keep-duration'] is None:
 if config['keep-count'] <= 0:
 	sys.stderr.write('WARNING adjusting keep-count=%d to keep-count=1\n' % config['keep-count'])
 	config['keep-count'] = 1
+if config['root'] not in ['sudo', 'fake', 'me']:
+	sys.stderr.write('ERROR invalid root mode %s\n' % config['root'])
+	sys.exit(1)
 now = datetime.now()
 def format_date(date):
 	return date.strftime('@%Y-%m-%d_%H-%M-%S')
@@ -199,7 +204,14 @@ target = os.path.abspath(target)
 existing = sorted(glob(os.path.join(target, '@20??-??-??_??-??-??')))
 if mode == 'backup':
 	# create a lockfile to prevent concurrent backups.
-	lockfile = open(target + '/.lock', 'w')
+	lockfile = target + '/.lock'
+	if not os.path.isfile(lockfile) and config['root'] == 'sudo':
+		# in sudo mode, we may not be able to write the lockfile to the target directory. so we simply use sudo to
+		# create it beforehand and set proper rights
+		subprocess.check_call(['sudo', 'touch', lockfile])
+		subprocess.check_call(['sudo', 'chmod', '0600', lockfile])
+		subprocess.check_call(['sudo', 'chown', str(os.getuid()), lockfile])
+	lockfile = open(lockfile, 'w')
 	try:
 		fcntl.lockf(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
 	except OSError as e:
@@ -212,10 +224,15 @@ if mode == 'backup':
 				% (os.path.basename(existing[-1]), config['backup-cooldown']))
 		sys.exit(1)
 	# then delete all obsolete backups
-	while len(existing) > config['keep-count'] and os.path.basename(existing[0]) <= min_date:
+	while len(existing) > config['keep-count'] and os.path.basename(existing[0]) < min_date:
 		if cmd.is_verbose():
 			sys.stderr.write('INFO removing obsolete backup %s\n' % os.path.basename(existing[0]))
-		subprocess.check_call(['rm', '-rf', existing[0]])
+		rm = ['rm', '-rf', existing[0]]
+		if config['root'] == 'sudo':
+			# in sudo mode, stick sudo in front. otherwise we should be able to delete it because we eitehr own it
+			# (root=fake) or because we're root (root=me)
+			rm = ['sudo'] + rm
+		subprocess.check_call(rm)
 		del existing[0]
 latest = existing[-1] if existing != [] else None
 # note that every string starts with an empty string, so "space@" selects everything for listing ;)
@@ -223,8 +240,24 @@ latest = existing[-1] if existing != [] else None
 if time is not None:
 	selected = [dir for dir in existing if os.path.basename(dir).startswith(time)]
 
-# assemble the actual rsync command
+# root handling
 rsync = cmd.get_command()
+if config['root'] == 'sudo':
+	# sudo mode: stick sudo in front and add --super to make sure we don't silently drop attributes if somehow sudo
+	# didn't do its job
+	# sudo obviously needs to be configured properly, and because rsync cannot be reasonably restricted to the point
+	# where it can no longer take over the system, sudo might as well be configured for NOPASSWD: ALL. this makes sudo
+	# mode no more secure than running as root – but sudo mode is only meant to allow running SSH with
+	# PermitRootLogin=no which is a HUGE security gain.
+	rsync = ['sudo'] + rsync + ['--super']
+elif config['root'] == 'fake':
+	# fakeroot mode: use rsync's --fake-super to store attributes in xattrs instead. this is the most secure option but
+	# means the backup can only be accessed using rsync. seen locally, the permissions are all wrong.
+	rsync.append('--fake-super')
+else:
+	# if configured for root mode (root=me), stick in --super so we fail if we aren't actually root
+	rsync.append('--super')
+# assemble the actual rsync command
 if mode == 'backup':
 	# backup to temp subdirectory first. that gets moved into place once the backup has finished successfully
 	current = os.path.join(target, format_date(now))
@@ -276,8 +309,6 @@ else:
 				% (path, os.path.basename(base)))
 	rsync += ['.', base]
 
-if cmd.is_verbose():
-	sys.stderr.write('INFO invoking %s\n' % ' '.join(rsync))
 sys.stderr.flush()
 retcode = subprocess.call(rsync)
 # exit code 24 is vanished files, which are somewhat expected on an active system
