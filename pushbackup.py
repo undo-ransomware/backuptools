@@ -1,11 +1,10 @@
 #!/usr/bin/python3
 import os
 import sys
-import shlex
+import fcntl
 import subprocess
 from glob import glob
 from datetime import datetime
-
 from collections import defaultdict
 from argparse import ArgumentParser
 from confparser import ConfigParser
@@ -181,6 +180,7 @@ now = datetime.now()
 def format_date(date):
 	return date.strftime('@%Y-%m-%d_%H-%M-%S')
 min_date = format_date(now - config['keep-duration'])
+max_date = format_date(now - config['backup-cooldown'])
 
 # instead of configuring every single host + space combination, we do allow simply creating the corresponding backup
 # directory instead. the config has defaults and can easily configure backup directories for all hosts at once. the host
@@ -198,6 +198,20 @@ target = os.path.abspath(target)
 # before backing up (and only then), remove obsolete backups. note that keep-count ≥ 1 because we clamped it above
 existing = sorted(glob(os.path.join(target, '@20??-??-??_??-??-??')))
 if mode == 'backup':
+	# create a lockfile to prevent concurrent backups.
+	lockfile = open(target + '/.lock', 'w')
+	try:
+		fcntl.lockf(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+	except OSError as e:
+		sys.stderr.write('ERROR failed to acquire backup lock! is another backup still running?\n')
+		sys.stderr.write('INFO exception: %s\n' % str(e))
+		sys.exit(1)
+	# enforce backup-cooldown setting
+	if existing != [] and os.path.basename(existing[-1]) >= max_date:
+		sys.stderr.write('ERROR latest backup %s is too recent, try again later (cooldown: %s)\n' \
+				% (os.path.basename(existing[-1]), config['backup-cooldown']))
+		sys.exit(1)
+	# then delete all obsolete backups
 	while len(existing) > config['keep-count'] and os.path.basename(existing[0]) <= min_date:
 		if cmd.is_verbose():
 			sys.stderr.write('INFO removing obsolete backup %s\n' % os.path.basename(existing[0]))
@@ -212,8 +226,7 @@ if time is not None:
 # assemble the actual rsync command
 rsync = cmd.get_command()
 if mode == 'backup':
-	# backup to temp subdirectory first. that gets moved into place once the backup has finished successfully.
-	# TODO should probably use some sort of lockfile to prevent concurrent backups!
+	# backup to temp subdirectory first. that gets moved into place once the backup has finished successfully
 	current = os.path.join(target, format_date(now))
 	tempdir = os.path.join(target, 'temp')
 	os.makedirs(tempdir, exist_ok=True)
@@ -272,3 +285,4 @@ if retcode not in [0, 24]:
 	sys.exit(retcode)
 if mode == 'backup':
 	os.rename(tempdir, current)
+	fcntl.lockf(lockfile, fcntl.LOCK_UN)
