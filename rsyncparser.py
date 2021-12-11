@@ -74,8 +74,8 @@ class RsyncParser:
 				m = re.match('-e\d*\.\d*(i?).*', value)
 				if not m:
 					self.error('-e', 'strange -e options string %s' % value)
-				elif m.group(1) != 'i':
-					self.warn('--inc-recursive', 'incremental recursion not enabled, consider using')
+				else:
+					self.inc_rec = m.group(1) == 'i'
 				self.opts[value].append(None)
 				continue
 			elif opts.startswith('- '): # last short option parsed
@@ -120,6 +120,8 @@ class RsyncParser:
 					self.error(key, 'do not use', hint)
 				else:
 					self.warn(key, 'avoid using', hint)
+		if not self.inc_rec and '-r' in self.opts:
+			self.warn('--inc-recursive', 'incremental recursion not enabled, consider using')
 
 	def add(self, modes, *args, alias=None):
 		for names, mode, *hint in modes:

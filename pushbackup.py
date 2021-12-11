@@ -40,7 +40,7 @@ cmd.add([('verify', 'recommend', 'to see the differences'), ('backup restore lis
 cmd.deny('--compare-dest=', '--copy-dest=', '--link-dest=', hint='backups always use --link-dest')
 # backup always runs with --partial-dir, and --max-alloc is configurable server-side. also we always pass either --super
 # or --fake-super.
-cmd.deny('--partial', '--partial-dir=', hint='this option is always set server-side')
+cmd.deny('--partial', '--partial-dir=', '--delete-excluded', hint='this option is always set server-side')
 cmd.deny('--fake-super', '--super', '--max-alloc=', hint='this option is configured server-side')
 
 #### optined required for a complete backup / restore ####
@@ -57,10 +57,9 @@ cmd.add([('backup verify', 'require', 'works even if locally unsupported'), ('li
 # --delete* is optional on restore and meaningless on list, but isn't sent to the server in those cases.
 # for backup, --delete is required to get a backup without zombie files, and has to be specifically --delete-delay to
 # support --fuzzy --inc-recursive without running out of memory.
-cmd.deny('--delete', '--delete-after', '--delete-before', '--delete-during', '--delete-excluded',
-		hint='use --delete-delay')
+cmd.deny('--delete', '--delete-after', '--delete-before', '--delete-during', hint='use --delete-delay')
 cmd.add([('restore list', 'deny', 'how did you even get your rsync to send that option?'),
-		('backup verify', 'require', 'avoids zombie files')], '--delete-delay', '--delete-excluded')
+		('backup verify', 'require', 'avoids zombie files')], '--delete-delay')
 # access and creation times technically make for a more complete backup, but are so obscure that nobody ever cares. also
 # the options didn't even exist before rsync 3.2. --atimes basically requires --open-noatime, though it doesn't
 # automatically imply it.
@@ -114,6 +113,7 @@ cmd.allow('-z --compress', '-y --fuzzy', '-S --sparse', '--bwlimit', '--checksum
 # allow debug output (doen#t hurt) and mixing errors with messages (only hurts the user)
 cmd.allow('--stats', '--debug=', '--info=', '--no-msgs2stderr', '--msgs2stderr', hint='informational outputs')
 
+# parse command and bail out if inacceptable
 if 'SSH_ORIGINAL_COMMAND' not in os.environ:
 	sys.stderr.write('SSH_ORIGINAL_COMMAND not set, is SSH configured correctly?\n')
 	sys.exit(1)
@@ -123,23 +123,152 @@ for msg in cmd.get_messages():
 path = cmd.get_path()
 if path is None:
 	sys.exit(1)
+mode = cmd.get_mode()
 
-while path.startswith('/'):
-	path = path[1:]
+# parse backup space, subdirectory and time specification. this whole thing is formatted as space@time/path/ and all
+# components of that are optional.
+# trailing slashes for the source argument are significant for rsync. (for destination, it doesn't make a difference.)
+# - for backup and verify, it's important to give things with a trailing slash: /var/ sends all the files inside /var,
+#   while /var sends the directory itself. but the source isn't sent to the server so we have no way of checking that.
+# - for restore, we need to allow no trailing spaces to restore single files. but we must guarantee a slash after the
+#   @time directory so the client doesn't annoyingly get that. and we can warn if a directory is fetched without the
+#   trailing slash.
+# - for listing, @ behaves special where the path isn't actually passed to rsync, we need to ensure a slash after the source directory.
+# all of that boils down to ensuring that the path always starts with a slash, handling that correctly for listing, and
+# issuing the warning if restoring a directory without the trailing slash
 if '/' in path:
 	pos = path.index('/')
 	space = path[0:pos]
-	path = path[pos+1:] if pos < len(path) else None
-elif path == '.':
-	space = 'default'
-	path = None
+	path = path[pos:] if pos < len(path) else '/'
 else:
 	space = path
-	path = None
-
+	path = '/'
 if '@' in space:
 	pos = space.index('@')
-	time = space[pos+1:]
-	space = space[0:pos]
+	time = space[pos:]
+	space = space[:pos]
 else:
 	time = None
+if time == '@latest':
+	time = None
+if space == '.' or space == '':
+	space = 'default'
+if mode == 'backup' and (time is not None or path != '/'):
+	sys.stderr.write('ERROR cannot specify a path or time for backup mode\n')
+	sys.exit(1)
+
+# read config and apply the usual business logic of weird defaults
+config = ConfigParser(args.host, space)
+config.add_str('target')
+config.add_int('keep-count')
+config.add_timedelta('keep-duration')
+config.add_timedelta('backup-cooldown')
+with open(args.config, 'r') as fd:
+	config.parse(fd)
+if config['target'] is None:
+	sys.stderr.write('ERROR no backup directory specified for host %s and backup space %s\n' % (args.host, space))
+	sys.exit(1)
+if config['keep-count'] is None and config['keep-duration'] is None:
+	config['keep-count'] = 1000000 # keep "infinity" backups = never delete any backups
+elif config['keep-count'] is None:
+	config['keep-count'] = 1 # controlled by keep-duration only
+elif config['keep-duration'] is None:
+	config['keep-duration'] = timedelta(seconds=0) # controlled by keep-count only
+if config['keep-count'] <= 0:
+	sys.stderr.write('WARNING adjusting keep-count=%d to keep-count=1\n' % config['keep-count'])
+	config['keep-count'] = 1
+now = datetime.now()
+def format_date(date):
+	return date.strftime('@%Y-%m-%d_%H-%M-%S')
+min_date = format_date(now - config['keep-duration'])
+
+# instead of configuring every single host + space combination, we do allow simply creating the corresponding backup
+# directory instead. the config has defaults and can easily configure backup directories for all hosts at once. the host
+# is actually trustworthy because it has to be configured in authorized_keys anyway. but we don't allow any random space
+# name here.
+# this boils down to just using whatever exists, and creating it if it doesn't exist but is configured.
+target = config['target'].replace('{HOST}', args.host).replace('{SPACE}', space)
+if not os.path.isdir(target):
+	if (args.host, space) not in config.sections():
+		sys.stderr.write('ERROR backup space %s neither configured nor present for host %s\n' % (space, args.host))
+		sys.exit(1)
+	os.makedirs(target, exist_ok=True)
+target = os.path.abspath(target)
+
+# before backing up (and only then), remove obsolete backups. note that keep-count ≥ 1 because we clamped it above
+existing = sorted(glob(os.path.join(target, '@20??-??-??_??-??-??')))
+if mode == 'backup':
+	while len(existing) > config['keep-count'] and os.path.basename(existing[0]) <= min_date:
+		if cmd.is_verbose():
+			sys.stderr.write('INFO removing obsolete backup %s\n' % os.path.basename(existing[0]))
+		subprocess.check_call(['rm', '-rf', existing[0]])
+		del existing[0]
+latest = existing[-1] if existing != [] else None
+# note that every string starts with an empty string, so "space@" selects everything for listing ;)
+# for verify or restore it selects the oldest backup, which is much less useful but acceptable
+if time is not None:
+	selected = [dir for dir in existing if os.path.basename(dir).startswith(time)]
+
+# assemble the actual rsync command
+rsync = cmd.get_command()
+if mode == 'backup':
+	# backup to temp subdirectory first. that gets moved into place once the backup has finished successfully.
+	# TODO should probably use some sort of lockfile to prevent concurrent backups!
+	current = os.path.join(target, format_date(now))
+	tempdir = os.path.join(target, 'temp')
+	os.makedirs(tempdir, exist_ok=True)
+	if latest is not None:
+		rsync += ['--link-dest=%s' % latest]
+	rsync += ['--partial-dir=.rsync-partial', '--delete-excluded', '.', tempdir]
+elif mode == 'list':
+	if time is not None:
+		if len(selected) == 0:
+			sys.stderr.write('WARNING no backups matching %s for backup space %s on host %s\n' % (time, space,
+					args.host))
+		elif path != '/':
+			# with both time specification and path, simply list that path in that backup. that obviously only works if
+			# precisely one backup is selected.
+			if len(selected) > 1:
+				sys.stderr.write('ERROR time must be unique when combined with a path in list mode\n')
+				sys.exit(1)
+			else:
+				selected = [selected[0] + path]
+		# else, with time specification but no path, list the selected backups including their time directories.
+		# this relies on two things:
+		# - the directories don't end with a slash so rsync actually sends their name
+		# - the remote rsync doesn't actually notice we're turning 1 argument into several arguments
+	else:
+		# no time specification, so we simply list the latest backup
+		selected = [latest + path]
+
+	rsync += ['.'] + selected
+else:
+	if time is not None:
+		if len(selected) == 0:
+			sys.stderr.write('ERROR no backups matching %s for backup space %s on host %s\n' % (time, space,
+					args.host))
+			sys.exit(1)
+		if (len(selected) > 1 and not cmd.is_quiet()) or cmd.is_verbose():
+			sys.stderr.write('INFO selecting backup %s\n' % os.path.basename(min(selected)))
+		base = min(selected)
+	elif latest is None:
+		sys.stderr.write('ERROR no backups found for backup space %s on host %s\n' % (space, args.host))
+		sys.exit(1)
+	else:
+		base = latest
+	base += path
+	
+	if mode == 'restore' and os.path.isdir(base) and not base.endswith('/') and not cmd.is_quiet():
+		sys.stderr.write('WARNING restoring directory %s without trailing slash, restored paths will start with %s/\n' \
+				% (path, os.path.basename(base)))
+	rsync += ['.', base]
+
+if cmd.is_verbose():
+	sys.stderr.write('INFO invoking %s\n' % ' '.join(rsync))
+sys.stderr.flush()
+retcode = subprocess.call(rsync)
+# exit code 24 is vanished files, which are somewhat expected on an active system
+if retcode not in [0, 24]:
+	sys.exit(retcode)
+if mode == 'backup':
+	os.rename(tempdir, current)

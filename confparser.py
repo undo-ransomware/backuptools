@@ -33,7 +33,12 @@ class ConfigParser:
 			value = default
 		return value
 
+	def sections(self):
+		return [ tuple(sect.split(':', 1)) if ':' in sect else (sect, None) for sect in self._sections ]
+
 	def _timedelta(value):
+		if value.endswith('w'):
+			return timedelta(weeks=int(value[:-1]))
 		if value.endswith('d'):
 			return timedelta(days=int(value[:-1]))
 		if value.endswith('h'):
@@ -66,6 +71,7 @@ class ConfigParser:
 
 	def parse(self, fd):
 		self.values = defaultdict(dict)
+		self._sections = list()
 		section = None
 		for line in fd:
 			line = line.rstrip('\r\n')
@@ -76,6 +82,8 @@ class ConfigParser:
 
 			if line.startswith('[') and line.endswith(']'):
 				section = line[1:-1]
+				if section != 'global':
+					self._sections.append(section)
 				continue
 			if '=' not in line:
 				raise ConfigException('missing value for option %s' % line)
@@ -105,6 +113,7 @@ if __name__ == '__main__':
 	assert parser['bar'] == 'baz'
 	assert parser['exclude'] is None
 	assert parser['cooldown'] == timedelta(milliseconds=500)
+	assert parser.sections() == []
 
 	parser.parse(['[global]', 'test= value ', 'foo=1', 'bar=', 'exclude=/tmp', 'exclude=/var/tmp', 'cooldown=1d'])
 	assert parser['test'] == ' value '
@@ -112,6 +121,7 @@ if __name__ == '__main__':
 	assert parser['bar'] == ''
 	assert parser['exclude'] == ['/tmp', '/var/tmp']
 	assert parser['cooldown'] == timedelta(days=1)
+	assert parser.sections() == []
 
 	parser.parse(['[global]', 'test=glob', 'bar=barf', 'exclude=/tmp', 'exclude=/var/tmp', '[localhost]', 'test=local',
 			'cooldown=3m', '[localhost:root]', 'exclude=/bin/bash', 'cooldown=15s'])
@@ -121,3 +131,4 @@ if __name__ == '__main__':
 	assert parser['exclude'] == ['/bin/bash']
 	assert parser['cooldown'] == timedelta(seconds=15)
 	assert parser.get('localhost', 'cooldown') == timedelta(minutes=3)
+	assert parser.sections() == [('localhost', None), ('localhost', 'root')]
