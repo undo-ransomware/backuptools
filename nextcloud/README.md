@@ -32,3 +32,13 @@ situation, by the way, is to `touch` the file, changing its modification time.
 the sync client will the  upload it again.) the script was meant to check for
 further zombie files, but never found any and the problem has never reappeared
 since.
+
+## ncupdate.py
+
+a script to do unattended updates of nextcloud. isn't strictly backup related,
+except it does prevent you from needing the backup because your nextcloud was
+too old, has just been hacked and you now need to restore it...
+
+the script doesn't actually do much: it runs `updater.phar` and if that
+immediately says 'no update available' the scrpt swallows its output so you
+don't get a useless (and daily!) email from cron.
