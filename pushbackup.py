@@ -93,7 +93,7 @@ cmd.deny('-s --protect-args', '-@ --modify-window=', '-B --block-size=', hint='n
 # sense only for restore but then aren't sent to the server (--existing).
 cmd.deny('-R --relative', '-b --backup', '-u --update', '--append', '--backup-dir', '--delay-updates', '--existing',
 		'--inplace', '--remove-source-files', '--groupmap=', '--usermap=', '--mkpath', '--preallocate', '--suffix=',
-		'--size-only', 
+		'--size-only',
 		hint='does not make sense for backup storage')
 # seriously dangerous options. most of them can be used for at least arbitrary file read, some even arbitrary file write
 cmd.deny('-K --keep-dirlinks', '--daemon', '--files-from=', '--write-devices', '--log-file=', '--only-write-batch=',
@@ -275,7 +275,9 @@ elif mode == 'list':
 			# with both time specification and path, simply list that path in that backup. that obviously only works if
 			# precisely one backup is selected.
 			if len(selected) > 1:
-				sys.stderr.write('ERROR time must be unique when combined with a path in list mode\n')
+				sys.stderr.write('ERROR timestamp %s must be unique when combined with a path in list mode\n' % time)
+				for dir in selected:
+					sys.stderr.write('INFO timestamp matches %s\n' % os.path.basename(dir))
 				sys.exit(1)
 			else:
 				selected = [selected[0] + path]
@@ -294,7 +296,12 @@ else:
 			sys.stderr.write('ERROR no backups matching %s for backup space %s on host %s\n' % (time, space,
 					args.host))
 			sys.exit(1)
-		if (len(selected) > 1 and not cmd.is_quiet()) or cmd.is_verbose():
+		if len(selected) > 1:
+			sys.stderr.write('ERROR timestamp %s must be unique in %s mode\n' % (time, mode))
+			for dir in selected:
+				sys.stderr.write('INFO timestamp matches %s\n' % os.path.basename(dir))
+			sys.exit(1)
+		if cmd.is_verbose():
 			sys.stderr.write('INFO selecting backup %s\n' % os.path.basename(min(selected)))
 		base = min(selected)
 	elif latest is None:
@@ -303,7 +310,7 @@ else:
 	else:
 		base = latest
 	base += path
-	
+
 	if mode == 'restore' and os.path.isdir(base) and not base.endswith('/') and not cmd.is_quiet():
 		sys.stderr.write('WARNING restoring directory %s without trailing slash, restored paths will start with %s/\n' \
 				% (path, os.path.basename(base)))
