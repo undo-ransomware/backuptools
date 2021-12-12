@@ -1,0 +1,11 @@
+# temporary files
+- /tmp/**
+- /var/tmp/**
+- /var/cache/**
+# SSH keys (better lost than leaked, usually)
+- /etc/ssh/ssh_host_*_key*
+- /root/.ssh/id_*
+- /home/*/.ssh/id_*
+# SSL certificates (same)
+- /etc/ssl/private/**
+- /etc/letsencrypt/archive/**

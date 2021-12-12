@@ -132,3 +132,110 @@ timestamp specifications are similar to restore mode, but behave differently:
   you can give the path as `/.` to force this behavior:
   `rsync --list-only backups@supernova:root@2020-01-01/.` lists that particular
   backup if it's unique.
+
+# setup
+
+## installation on server
+
+- create a user for the backup server: `adduser backups --disabled-password`
+  (optional)
+- place `pushbackup.py`, `rsyncparser.py` and `confparser.py` somewhere
+  convenient (`/usr/local/lib/pushbackup/` would be LSB-y, or just put them
+  into `~backups`). make sure `pushbackup.py` is `chmod +x`
+- configure `pushbackup.conf` with appropriate defaults (see below). it goes
+  in `~backups` unless you configure the path differently (using
+  `-c /etc/pushbackup.conf` in the forced SSH command)
+- make sure rsync is installed ;)
+
+## setting up a client
+
+- create an SSH key on the client: `ssh-keygen -t ed25519 -f /root/backup.key`
+- on the server, configure `~backups/.ssh/authorized_keys` with that key and a
+  forced command:
+```
+no-pty,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,command="/usr/local/lib/pushbackup/pushbackup.py supernova" ssh-ed25519 AAAA…M remote-backup@supernova
+```
+- configure the client's backup spaces in `pushbackup.conf`. if the defaults
+  are fine, simply create them instead. however, backup spaces have to either
+  exist or be configured to be usable!
+- determine which directories to include in / exclude from the backup and
+  write a corresponding rsync command (see above). excludes can be given as
+  `-e /tmp/**`, or use `-f ._/root/rsync-root.filters` with `rsync.filters`
+  as contained in the repo. see the FILTER RULES section in rsync's manpage
+  for details
+- execute the rsync command to check that it works and to create the initial
+  backup (can take a while if it's large)
+- create a cronjob to execute that command on whatever schedule you desire.
+  do make sure backup-cooldown is set to allow that frequency, though
+
+# configuration
+
+configuration is the usual not-quite-ini format used by most programs. it has
+a `[global]` section for defaults, `[hostname]` for individual hosts, and
+`[hostname:space]` for for individual backup spaces. comments start with `#`
+and must be on a line of their own (no comments after values or section names).
+for any given host and backup space, it uses the most specific value of:
+
+- the per backup space section `[hostname:space]`
+- the per host section `[hostname]`
+- the global defaults from `[global]`
+- the built-in defaults
+
+in most cases, options can simply be set globally and there is no need to
+configure them individually for each host + backup space combination. (this is
+why it also treats an existing directory like a configured backup space.)
+
+## backup storage location
+
+`target` sets the backup location. `{HOST}` and `{SPACE}` are replaced with the
+client's hostname and backup space, respectiely. usually, this is something
+like `target=/srv/backups/{HOST}-{SPACE}` or `/srv/backups/{HOST}/{SPACE}`.
+this is a required option; there is no built-in default.
+
+## root attribute storage method
+
+pushbackup needs to store permissions, owners and groups, which are privileged
+operations. the `root` option sets how these are handled:
+
+- `root=me` is used when pushbackup is simply run as root. this is the easiest
+  configuration but requires either installing it into root's `authorized_keys`
+  and logging in as root (which requires `PermitRootLogin=prohibit-password`
+  and is usually considered a bad idea), or having a sudo command in
+  `authorized_keys` (still feels somewhat unsafe).
+- `root=sudo` simply uses `sudo` for all root operations. note that sudo needs
+  to have permissions to run rsync, and there is no reasonable way to restrict
+  rsync from doing arbitrary file overwrite – this is what pushbackup.py is
+  for. thus sudo might as well be configured as `NOPASSWD: ALL`.
+- `root=fake` uses rsync's `--fake-super` and stores those attributes in an
+  extended attribute named `user.rsync.%stat`. this Just Works™ without root
+  rights and is therefore the default. it does however have the disadvantage
+  that the backup needs to be restored with rsync (it cannot be simply copied
+  into place) which is why this is configurable.
+
+## backup retention
+
+by default, backups are kept forever, which in practice means until the disk
+runs full and the admin needs to delete old backups. because that is tediuos
+and error-prone, pushbackup can automate it.
+
+- if only `keep-duration` is set, all backups older than the configured limit
+  are deleted. usually set to something like `keep-duration=30d` because
+  backups that old aren't much better than no data any more.
+- if only `keep-count` is set, that many backups are kept. this is not the
+  same as `keep-duration` if there are admin-initiated backups, or if the host
+  isn't up 24/7 and thus skips some backups. cannot be set to a value less
+  than 1 because at that point, it would be erasing the only remaining backup.
+- if both are set, pushbackup deletes any backups that are older than
+  `keep-duration` until only `keep-count` backups are left. this allows rules
+  like '10 backups but at least 7 days worth of backups' (accomodating some
+  admin-initiated ones in between the daily ones), or '30 days but at least 15
+  backups' (accomodating a host that isn't always up for its daily backup).
+- by default, backups are never deleted automatically
+
+## backup cooldown (ratelimit)
+
+`backup-cooldown` gives the minimum time between two backups. this prevents
+hosts from using excess resources sending backups rapid-fire. it also somewhat
+mitigates filling up the disk maliciuosly, though clients can always also send
+a single 427GB, all-zeros file for that. the default is zero, ie. backups can
+be fired off as fast as rsync allows.
