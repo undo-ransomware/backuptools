@@ -151,9 +151,11 @@ timestamp specifications are similar to restore mode, but behave differently:
 
 - create an SSH key on the client: `ssh-keygen -t ed25519 -f /root/backup.key`
 - on the server, configure `~backups/.ssh/authorized_keys` with that key and a
-  forced command:
+  forced command (single line broken up with ⏎ for readability):
 ```
-no-pty,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,command="/usr/local/lib/pushbackup/pushbackup.py supernova" ssh-ed25519 AAAA…M remote-backup@supernova
+no-pty,no-port-forwarding,no-X11-forwarding,no-agent-forwarding,⏎
+command="/usr/local/lib/pushbackup/pushbackup.py supernova" ⏎
+ssh-ed25519 AAAA…M remote-backup@supernova
 ```
 - configure the client's backup spaces in `pushbackup.conf`. if the defaults
   are fine, simply create them instead. however, backup spaces have to either
