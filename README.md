@@ -12,8 +12,10 @@ without breaking backwards compatibility. also, rsync actually has an option
 `--remote-option` precisely to run the `rsync --server` process with different
 options than the local rsync, so it is supported to some extent.
 
-the repo also contains scripts for a [pull-type backup](pullbackup/README.md),
-and [auxiliary scripts for backup to and from nextcloud](nextcloud/README.md).
+suggestions for [running nextcloud](nextcloud/README.md) in a small-scale
+deployment are in its own subdirectory, along with some auxiliary scripts for
+backup to and from nextcloud. the repo also contains a set of older, simpler
+scripts for a [pull-type backup](pullbackup/README.md).
 
 ## advantages of push-type backup
 
@@ -136,6 +138,11 @@ timestamp specifications are similar to restore mode, but behave differently:
 # setup
 
 ## installation on server
+
+this assumes that the server itself has already been set up properly: SSH
+login restricted to keys (`PasswordAuthentication=no`), some arrangement that
+ensures security updates are installed in a timely manner (for example using
+`unattended-upgrades`), possibly monitoring or at least a way to read cron's (local) email.
 
 - create a user for the backup server: `adduser backups --disabled-password`
   (optional)

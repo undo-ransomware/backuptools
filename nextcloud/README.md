@@ -179,6 +179,10 @@ the `config.php` snippet to use a local redis for file locking is
     'timeout' => 0.0),
 ```
 
+with a UNIX socket, redis uses peer authentication and therefore doesn't need a
+password. however, the apache user `www-data` has to be member of the `redis`
+group to get access: `sudo adduser www-data redis`.
+
 redis recommends several system-wide (`sysctl`) settings but runs fine without
 them, and in fact some of them are a really bad idea if other stuff is running
 on the same machine. the recommended ones are:
