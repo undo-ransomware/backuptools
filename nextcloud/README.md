@@ -110,14 +110,39 @@ mistyped the passphrase now or during setup. unmount the storage, delete
 `/srv/encrypted/*` and start over. otherwise the encrypted storage is ready
 to use.
 
-there seems to be a bug that after a reboot, you sometimes have to first do an
-`ecryptfs-add-passphrase --fnek`, enter the passphrase, then mount the storage
-and pointlessly enter the passphrase again. this may be related to doing the
-mount with sudo rather than on a true root login, though.
+NOTE: there seems to be a bug that after a reboot, you sometimes have to first
+do an `ecryptfs-add-passphrase --fnek`, enter the passphrase, then execute the
+`monut /srv/cloud` command and pointlessly enter the passphrase again. this
+may be related to doing the mount with sudo rather than on a true root login,
+though.
+
+nextcloud handles a missing data directory somewhat gracefully – by aborting
+early on for every request. while that doesn't give you a nice "out of service"
+message, it does prevent the client from trying to re-upload all files. to be
+on the safe side, configure apache's systemd job so that it doesn't start
+unless the mount, and postgres, is available. this requires a systemd override
+config which goes into `/etc/systemd/system/apache2.service.d/override.conf`
+but is best created with `sudo systemctl edit apache2`:
+
+```
+[Unit]
+RequiresMountsFor=/srv/cloud/
+Requires=postgresql.service
+After=postgresql.service
+```
 
 if you value the confidentiality of your filenames, repeat the same setup for
 `/var/lib/postgresql` and `/var/lib/autopostgresqlbackup`. or just symlink
-them somwehere, eg. somewhere in the main nextcloud data storage.
+them somwehere, eg. somewhere in the main nextcloud data storage. postgres,
+however, just completely fails to start when its data directory is missing.
+its `/etc/systemd/system/postgresql.service.d/override.conf` override config
+(`sudo systemctl edit postgresql`) could look like below, but if that path is
+a symlink you probably have to specify the symlink destination:
+
+```
+[Unit]
+RequiresMountsFor=/var/lib/postgresql/
+```
 
 # database
 
