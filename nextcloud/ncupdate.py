@@ -14,7 +14,7 @@ with os.popen('sudo -u www-data -H php updater/updater.phar -vv -n --no-ansi', '
 
 		if not active:
 			lines.append(line)
-			if len(lines) > 10 or re.match('^Update to .* available.*', line):
+			if len(lines) > 25 or re.match('^Update to .* available.*', line):
 				active = True
 				for l in lines:
 					sys.stdout.write(l)
